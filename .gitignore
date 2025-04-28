@@ -1,0 +1,6 @@
+# .gitignore
+.env
+*.pdf
+__pycache__/
+*.pyc
+chatbot_env/
