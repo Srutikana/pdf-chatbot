@@ -7,26 +7,35 @@ from langchain.vectorstores import FAISS
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 import os
+from huggingface_hub import InferenceClient
+from PIL import Image
+import io
 
 # Load environment variables
 load_dotenv()
 
-# Initialize session state for chat history and vector store
+# Initialize session state for chat history, vector store, and image
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
 if "conversation" not in st.session_state:
     st.session_state.conversation = None
+if "generated_image" not in st.session_state:
+    st.session_state.generated_image = None
 
 # Streamlit app title
-st.title("📄 Chat with Multiple PDFs")
+st.title("📄 Chat with PDFs & Generate Images")
 
-# Sidebar for PDF upload
+# Sidebar for PDF upload and image generation
 with st.sidebar:
     st.header("Upload PDFs")
     uploaded_files = st.file_uploader("Choose PDF files", type="pdf", accept_multiple_files=True)
     process_button = st.button("Process PDFs")
+
+    st.header("Generate Image")
+    image_prompt = st.text_input("Enter a prompt for image generation (e.g., 'A futuristic city at sunset')")
+    generate_image_button = st.button("Generate Image")
 
 # Function to extract text from PDFs
 def get_pdf_text(pdf_files):
@@ -67,7 +76,7 @@ def process_pdfs(pdf_files):
         # Initialize language model with explicit task
         llm = HuggingFaceEndpoint(
             repo_id="mistralai/Mistral-7B-Instruct-v0.3",
-            task="text-generation",  # Explicitly set the task
+            task="text-generation",
             max_new_tokens=512,
             temperature=0.7,
             huggingfacehub_api_token=os.getenv("HUGGINGFACEHUB_API_TOKEN")
@@ -93,17 +102,51 @@ def process_pdfs(pdf_files):
     except Exception as e:
         st.error(f"Error processing PDFs: {str(e)}")
 
+# Function to generate image
+def generate_image(prompt):
+    try:
+        # Initialize Hugging Face Inference Client
+        client = InferenceClient(token=os.getenv("HUGGINGFACEHUB_API_TOKEN"))
+        
+        # Generate image using FLUX.1-schnell
+        image = client.text_to_image(
+            model="black-forest-labs/FLUX.1-schnell",
+            prompt=prompt,
+            num_inference_steps=25,  # Reduced for faster generation
+            guidance_scale=7.5
+        )
+        
+        # Convert image to bytes for Streamlit display
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        img_byte_arr = img_byte_arr.getvalue()
+        
+        # Store image in session state
+        st.session_state.generated_image = img_byte_arr
+        st.success("Image generated successfully!")
+    except Exception as e:
+        st.error(f"Error generating image: {str(e)}")
+
 # Process uploaded PDFs
 if process_button and uploaded_files:
     with st.spinner("Processing PDFs..."):
         process_pdfs(uploaded_files)
+
+# Generate image
+if generate_image_button and image_prompt:
+    with st.spinner("Generating image..."):
+        generate_image(image_prompt)
+
+# Display generated image if available
+if st.session_state.generated_image:
+    st.image(st.session_state.generated_image, caption="Generated Image", use_column_width=True)
 
 # Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
-# Handle user input
+# Handle user input for PDF queries
 if prompt := st.chat_input("Ask a question about the PDFs"):
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -125,3 +168,5 @@ if prompt := st.chat_input("Ask a question about the PDFs"):
     else:
         with st.chat_message("assistant"):
             st.write("Please upload and process PDFs first.")
+
+
